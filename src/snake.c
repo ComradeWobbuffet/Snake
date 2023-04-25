@@ -53,7 +53,16 @@
 #define TRUE  1
 #define FALSE 0
 
+#define BITS_PER_CELL   3
+#define CELLS_PER_PACK  ((sizeof(cell_pack_t) * 8) / BITS_PER_CELL)
+#define PACKS_PER_ROW   (BOARD_WIDTH / CELLS_PER_PACK + 1)
+#define PACK_INDEX(i)   ((i) / CELLS_PER_PACK)
+#define CELL_OFFSET(i)  (((i) % CELLS_PER_PACK) * BITS_PER_CELL)
+#define CELL_MASK       ~(~0 << BITS_PER_CELL)
+
 typedef int bool_t;
+
+typedef unsigned int cell_pack_t;
 
 /* We define an enumerate data type cell_state_t which represents the state
  * of a cell on the board.
@@ -89,13 +98,14 @@ typedef enum _game_status
 /* The board is global static 2D array of
  * BOARD_HEIGHT x BOARD_WIDTH items of type cell_state_t
 */
-static cell_state_t board[BOARD_HEIGHT][BOARD_WIDTH];
+static cell_pack_t board[BOARD_HEIGHT][PACKS_PER_ROW];
 
 /* The current cells of the snake's head and tail */
 static cell_t snake_head, snake_tail, food_loc;
 
 /* We declare function prototypes here */
 static bool_t cells_eq(const cell_t* cell1, const cell_t* cell2);
+static cell_state_t get_cell(int row, int column);
 static void set_cell(int row, int column, cell_state_t state);
 static bool_t get_next_cell(cell_t* cell, int direction);
 static void gen_food();
@@ -118,6 +128,11 @@ static bool_t cells_eq(const cell_t* cell1, const cell_t* cell2)
   return cell1->row == cell2->row && cell1->column == cell2->column;
 }
 
+static cell_state_t get_cell(int row, int column)
+{
+  return (board[row][PACK_INDEX(column)] >> CELL_OFFSET(column)) & CELL_MASK;
+}
+
 /* Function: set_cell
  * Purpose: Update the state of a cell on the board.
  * Arguments:
@@ -128,7 +143,12 @@ static bool_t cells_eq(const cell_t* cell1, const cell_t* cell2)
 static void set_cell(int row, int column, cell_state_t state)
 {
   if (row < BOARD_HEIGHT && column < BOARD_WIDTH) /* validate arguments */
-    board[row][column] = state;
+  {
+    int offset = CELL_OFFSET(column);
+    cell_pack_t* pack = &(board[row][PACK_INDEX(column)]);
+    cell_pack_t mask = ~(CELL_MASK << offset);
+    *pack = (*pack & mask) | (state << offset);
+  }
 }
 
 /* Function: get_next_cell
@@ -173,8 +193,8 @@ static void gen_food()
   {
     food_loc.row = rand() % BOARD_HEIGHT;
     food_loc.column = rand() % BOARD_WIDTH;
-  } while (board[food_loc.row][food_loc.column] != CELL_EMPTY);
-  board[food_loc.row][food_loc.column] = CELL_HAS_FOOD;
+  } while (get_cell(food_loc.row, food_loc.column) != CELL_EMPTY);
+  set_cell(food_loc.row, food_loc.column, CELL_HAS_FOOD);
 }
 
 /* Function: init_board
@@ -210,7 +230,7 @@ static game_status_t move_snake(int direction)
   game_status_t status;
 
   /* Update current head cell with the direction */
-  board[snake_head.row][snake_head.column] = OCC_FLAG | direction;
+  set_cell(snake_head.row, snake_head.column, OCC_FLAG | direction);
 
   /* Update snake head to the next cell */
   if (!get_next_cell(&snake_head, direction))
@@ -220,7 +240,7 @@ static game_status_t move_snake(int direction)
   if (snake_head.row < 0 || snake_head.row >= BOARD_HEIGHT ||
       snake_head.column < 0 || snake_head.column >= BOARD_WIDTH ||
       (!cells_eq(&snake_head, &snake_tail) &&
-       IS_OCCUPIED(board[snake_head.row][snake_head.column])))
+       IS_OCCUPIED(get_cell(snake_head.row, snake_head.column))))
   {
     status = GAME_LOSE;
   }
@@ -229,10 +249,10 @@ static game_status_t move_snake(int direction)
     /* Unless the next cell has food, we want to move the tail in its direction,
      * otherwise we keep the tail in position to grow the snake by one cell.
      */
-    if (board[snake_head.row][snake_head.column] != CELL_HAS_FOOD)
+    if (get_cell(snake_head.row, snake_head.column) != CELL_HAS_FOOD)
     {
-      int tail_dir = board[snake_tail.row][snake_tail.column] & 3;
-      board[snake_tail.row][snake_tail.column] = CELL_EMPTY;
+      int tail_dir = get_cell(snake_tail.row, snake_tail.column) & 3;
+      set_cell(snake_tail.row, snake_tail.column, CELL_EMPTY);
       get_next_cell(&snake_tail, tail_dir);
     }
     else
@@ -241,7 +261,7 @@ static game_status_t move_snake(int direction)
       gen_food();
     }
     /* New head cell is now occupied */
-    board[snake_head.row][snake_head.column] = OCC_FLAG | direction;
+    set_cell(snake_head.row, snake_head.column, OCC_FLAG | direction);
     status = GAME_CONT;
   }
 
